@@ -6,7 +6,10 @@
 #error Platform not supported
 #endif
 #include <WiFiClientSecure.h>
+
 #include <PubSubClient.h>
+//#define MQTT_MAX_PACKET_SIZE 512 //maybe only on arduino ide modify MQTT_MAX_PACKET_SIZE 256 to 512
+
 #include <ArduinoJson.h> //https://github.com/bblanchon/ArduinoJson (use v6.xx)
 #include <time.h>
 #define emptyString String()
@@ -20,8 +23,17 @@
 #endif
 
 const int MQTT_PORT = 8883;
-const char MQTT_SUB_TOPIC[] = ""THINGNAME"/update";
-const char MQTT_PUB_TOPIC[] = ""THINGNAME"/update";
+const char MQTT_SUB_TOPIC[] = "$aws/things/"THINGNAME"/shadow/update/accepted";
+
+const char MQTT_SUB_TOPIC_DELTA[] = "$aws/things/"THINGNAME"/shadow/update/delta";
+
+const char MQTT_SUB_TOPIC_GET[] = "$aws/things/"THINGNAME"/shadow/get/accepted";
+
+const char MQTT_PUB_TOPIC[] = "$aws/things/"THINGNAME"/shadow/update";
+
+const char MQTT_PUB_TOPIC_GET[] = "$aws/things/"THINGNAME"/shadow/get";
+
+//$aws/things/espThing/shadow/update
 
 #ifdef USE_SUMMER_TIME_DST
 uint8_t DST = 1;
@@ -45,6 +57,15 @@ unsigned long lastMillis = 0;
 time_t now;
 //time_t nowish = 1510592825;
 time_t nowish = 8 * 3600 * 2;
+
+
+void reportState(int lightState)
+{
+   char buffer[50];
+   sprintf(buffer, "{\"state\": {\"reported\": {\"lights\": %d},\"desired\": null}}", lightState);
+  if (!client.publish(MQTT_PUB_TOPIC, buffer, false))
+    pubSubErr(client.state());
+}
 
 void NTPConnect(void)                                                         //npt connect
 {
@@ -76,8 +97,97 @@ void messageReceived(char *topic, byte *payload, unsigned int length)       //me
   
   StaticJsonDocument<200> doc;
   StaticJsonDocument<64> filter;
-  filter["state"]["reported"]["led"] = true;
-  //filter["state"]["reported"]["button"] = true;
+  
+//******************************************************
+
+  if(strcmp(topic, MQTT_SUB_TOPIC_GET) == 0) 
+  {
+    filter["state"]["reported"]["lights"] = true;
+    DeserializationError error = deserializeJson(doc,msgString, DeserializationOption::Filter(filter));
+    if (error) {
+      Serial.print(F("deserializeJson() failed: "));
+      Serial.println(error.c_str());
+      return;
+    }
+    
+    if(doc["state"]["desired"]["lights"]==false){  
+      digitalWrite(led_pin,HIGH);                //Led Turned off on high signal as it is active low
+      reportState(doc["state"]["desired"]["lights"]);
+    }
+    else if(doc["state"]["desired"]["lights"]==true){ 
+      digitalWrite(led_pin,LOW);               //Led Turned on by low signal as it is active low
+      reportState(doc["state"]["desired"]["lights"]);
+    }
+    else if(doc["state"]["reported"]["lights"]==false){  
+      digitalWrite(led_pin,HIGH);                //Led Turned off on high signal as it is active low
+      reportState(doc["state"]["reported"]["lights"]);
+    }
+    else if(doc["state"]["reported"]["lights"]==true){ 
+      digitalWrite(led_pin,LOW);               //Led Turned on by low signal as it is active low
+      reportState(doc["state"]["reported"]["lights"]);
+    }
+    else 
+    {
+      reportState(0);// send default state
+    }
+    
+    Serial.println("get/accepted");
+
+    
+    return;
+  }
+  else if(strcmp(topic, MQTT_SUB_TOPIC_DELTA) == 0) // update to reported: state, desired: null
+  {
+    filter["state"]["lights"] = true;
+    DeserializationError error = deserializeJson(doc,msgString, DeserializationOption::Filter(filter));
+    if (error) {
+      Serial.print(F("deserializeJson() failed: "));
+      Serial.println(error.c_str());
+      return;
+    }
+
+    if(doc["state"]["lights"]==false){  
+      digitalWrite(led_pin,HIGH);                //Led Turned off on high signal as it is active low
+      reportState(doc["state"]["lights"]);
+    }
+    else if(doc["state"]["lights"]==true){ 
+      digitalWrite(led_pin,LOW);               //Led Turned on by low signal as it is active low
+      reportState(doc["state"]["lights"]);
+    }
+    else 
+    {
+      reportState(0);// send default state
+    }
+    
+    Serial.println("update/delta");
+  }
+  else if(strcmp(topic, MQTT_SUB_TOPIC) == 0)
+  {
+    filter["state"]["desired"]["lights"] = true;
+    DeserializationError error = deserializeJson(doc,msgString, DeserializationOption::Filter(filter));
+    if (error) {
+      Serial.print(F("deserializeJson() failed: "));
+      Serial.println(error.c_str());
+      return;
+    }
+    Serial.println("update/accepted");
+  }
+  else
+  {
+    Serial.println("IDK what to do");
+  }
+
+
+//***********************************************
+
+
+  Serial.println("end of sub feed back");
+  return;
+  Serial.println("end of sub feed back check");
+ 
+  
+  filter["state"]["reported"]["lights"] = true;
+  filter["state"]["reported"]["lights"] = true;
   DeserializationError error = deserializeJson(doc,msgString, DeserializationOption::Filter(filter));
   
   // Test if parsing succeeds.
@@ -88,19 +198,32 @@ void messageReceived(char *topic, byte *payload, unsigned int length)       //me
   }
 
   /*
-  {
-    "state": {
-      "reported": {
-        "led": "1"
-      }
+{
+  "state": {
+    "reported": {
+      "lights": false
+    },
+    "desired": null
+  }
+}
+
+{
+  "state": {
+    "desired": {
+      "lights": false
     }
   }
+}
+
+
+
+
   */
   
-  if(doc["state"]["reported"]["led"]=="0"){  
+  if(doc["state"]["desired"]["lights"]==false){  
     digitalWrite(led_pin,HIGH);                //Led Turned off on high signal as it is active low
   }  
-  if(doc["state"]["reported"]["led"]=="1"){ 
+  if(doc["state"]["desired"]["lights"]==true){ 
     digitalWrite(led_pin,LOW);               //Led Turned on by low signal as it is active low
   }
   Serial.println();
@@ -138,7 +261,11 @@ void connectToMqtt(bool nonBlocking = false)                                    
     if (client.connect(THINGNAME))
     {
       Serial.println("connected!");
-      if (!client.subscribe(MQTT_SUB_TOPIC))
+     // if (!client.subscribe(MQTT_SUB_TOPIC))
+        //pubSubErr(client.state());
+      if (!client.subscribe(MQTT_SUB_TOPIC_GET))
+        pubSubErr(client.state());
+      if (!client.subscribe(MQTT_SUB_TOPIC_DELTA))
         pubSubErr(client.state());
     }
     else
@@ -204,7 +331,7 @@ void sendData(void)                                                         //se
   JsonObject root = jsonBuffer.to<JsonObject>();
   JsonObject state = root.createNestedObject("state");
   JsonObject state_reported = state.createNestedObject("reported");
-  state_reported["value"] = random(100);
+  state_reported["lights"] = !digitalRead(led_pin);
   Serial.printf("Sending  [%s]: ", MQTT_PUB_TOPIC);
   serializeJson(root, Serial);
   Serial.println();
@@ -244,6 +371,8 @@ void setup()                                                                    
   client.setCallback(messageReceived);
 
   connectToMqtt();
+
+  client.publish(MQTT_PUB_TOPIC_GET, "{}", false);
 }
 
 void loop()                                                                   //loop
