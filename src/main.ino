@@ -95,15 +95,21 @@ void messageReceived(char *topic, byte *payload, unsigned int length)       //me
   String msgString = msgIN;
   Serial.println("Recieved [" + String(topic) + "]: "+ msgString);
   
-  StaticJsonDocument<200> doc;
-  StaticJsonDocument<64> filter;
-  
+  StaticJsonDocument<400> doc;
+
+   DeserializationError error = deserializeJson(doc, msgString);
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.c_str());
+    return;
+  }
+
 //******************************************************
 
   if(strcmp(topic, MQTT_SUB_TOPIC_GET) == 0) 
   {
-    filter["state"]["reported"]["lights"] = true;
-    DeserializationError error = deserializeJson(doc,msgString, DeserializationOption::Filter(filter));
+    
+    DeserializationError error = deserializeJson(doc, msgString);
     if (error) {
       Serial.print(F("deserializeJson() failed: "));
       Serial.println(error.c_str());
@@ -138,13 +144,6 @@ void messageReceived(char *topic, byte *payload, unsigned int length)       //me
   }
   else if(strcmp(topic, MQTT_SUB_TOPIC_DELTA) == 0) // update to reported: state, desired: null
   {
-    filter["state"]["lights"] = true;
-    DeserializationError error = deserializeJson(doc,msgString, DeserializationOption::Filter(filter));
-    if (error) {
-      Serial.print(F("deserializeJson() failed: "));
-      Serial.println(error.c_str());
-      return;
-    }
 
     if(doc["state"]["lights"]==false){  
       digitalWrite(led_pin,HIGH);                //Led Turned off on high signal as it is active low
@@ -161,17 +160,6 @@ void messageReceived(char *topic, byte *payload, unsigned int length)       //me
     
     Serial.println("update/delta");
   }
-  else if(strcmp(topic, MQTT_SUB_TOPIC) == 0)
-  {
-    filter["state"]["desired"]["lights"] = true;
-    DeserializationError error = deserializeJson(doc,msgString, DeserializationOption::Filter(filter));
-    if (error) {
-      Serial.print(F("deserializeJson() failed: "));
-      Serial.println(error.c_str());
-      return;
-    }
-    Serial.println("update/accepted");
-  }
   else
   {
     Serial.println("IDK what to do");
@@ -180,24 +168,9 @@ void messageReceived(char *topic, byte *payload, unsigned int length)       //me
 
 //***********************************************
 
-
-  Serial.println("end of sub feed back");
   return;
-  Serial.println("end of sub feed back check");
- 
-  
-  filter["state"]["reported"]["lights"] = true;
-  filter["state"]["reported"]["lights"] = true;
-  DeserializationError error = deserializeJson(doc,msgString, DeserializationOption::Filter(filter));
-  
-  // Test if parsing succeeds.
-  if (error) {
-    Serial.print(F("deserializeJson() failed: "));
-    Serial.println(error.c_str());
-    return;
-  }
 
-  /*
+/*
 {
   "state": {
     "reported": {
@@ -214,19 +187,8 @@ void messageReceived(char *topic, byte *payload, unsigned int length)       //me
     }
   }
 }
-
-
-
-
-  */
+*/
   
-  if(doc["state"]["desired"]["lights"]==false){  
-    digitalWrite(led_pin,HIGH);                //Led Turned off on high signal as it is active low
-  }  
-  if(doc["state"]["desired"]["lights"]==true){ 
-    digitalWrite(led_pin,LOW);               //Led Turned on by low signal as it is active low
-  }
-  Serial.println();
 }
 
 void pubSubErr(int8_t MQTTErr)                                              //pub sub err
@@ -345,6 +307,7 @@ void setup()                                                                    
 {
   Serial.begin(115200);
   pinMode(led_pin, OUTPUT);
+  digitalWrite(led_pin,HIGH);
   Serial.println();
   Serial.println();
 #ifdef ESP32
